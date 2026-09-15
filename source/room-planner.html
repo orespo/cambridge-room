@@ -1,0 +1,138 @@
+<div id="room-play-0913">
+  <h3>Arrange your room</h3>
+  <div class="viz-controls">
+    <label class="form-label">Furniture <select class="form-select" data-ui="piece"></select></label>
+    <button type="button" class="btn" data-action="rotate-left" aria-label="Rotate selected furniture 45 degrees counterclockwise">↶ 45°</button>
+    <button type="button" class="btn" data-action="rotate-right" aria-label="Rotate selected furniture 45 degrees clockwise">↷ 45°</button>
+    <button type="button" class="btn" data-action="undo" disabled>Undo</button>
+  </div>
+  <div class="viz-controls">
+    <label class="form-label">Rotation · <span data-ui="angle-value">0°</span><input class="form-range" type="range" data-ui="angle" min="0" max="359" step="1" aria-label="Rotation in degrees"></label>
+  </div>
+  <div data-ui="canvas">
+    <svg data-ui="plan" role="img" aria-label="Interactive room plan. Select and drag furniture, or select a piece and use the move buttons below."></svg>
+  </div>
+  <div class="text-small" data-ui="status" aria-live="polite"></div>
+  <div class="viz-row" aria-label="Move selected furniture">
+    <button class="btn" type="button" data-action="left" aria-label="Move left">←</button>
+    <button class="btn" type="button" data-action="up" aria-label="Move up">↑</button>
+    <button class="btn" type="button" data-action="down" aria-label="Move down">↓</button>
+    <button class="btn" type="button" data-action="right" aria-label="Move right">→</button>
+    <label class="form-check"><input type="checkbox" class="form-check-input" data-ui="included" checked><span class="form-check-label">Include selected piece</span></label>
+  </div>
+  <details>
+    <summary>Adjust furniture proportions</summary>
+    <div class="viz-controls">
+      <label class="form-label">Width · <span data-ui="width-value"></span><input class="form-range" type="range" data-ui="width" min="20" max="350" step="5" aria-label="Furniture width in sketch units"></label>
+      <label class="form-label">Length · <span data-ui="height-value"></span><input class="form-range" type="range" data-ui="height" min="20" max="420" step="5" aria-label="Furniture length in sketch units"></label>
+    </div>
+  </details>
+  <div class="text-small text-muted">Approximate proportions, not measurements · W = window · C = closet · AC sits in W3</div>
+</div>
+<style>
+#room-play-0913 [data-ui="canvas"] {width:100%; margin:8px 0;}
+#room-play-0913 [data-ui="plan"] {display:block; width:100%; overflow:visible; touch-action:none; user-select:none;}
+#room-play-0913 .furniture {cursor:grab;}
+#room-play-0913 .furniture.dragging {cursor:grabbing;}
+#room-play-0913 [data-rotate] {cursor:crosshair;}
+#room-play-0913 [data-ui="status"] {min-height:2.5em;}
+#room-play-0913 details {margin:12px 0;}
+#room-play-0913 svg text {fill:var(--foreground); font-family:inherit; pointer-events:none;}
+</style>
+<script>
+(() => {
+  const root = document.getElementById('room-play-0913');
+  const ui = name => root.querySelector('[data-ui="'+name+'"]');
+  const svg = ui('plan'), ns = 'http://www.w3.org/2000/svg';
+  const pieces = [
+    {id:'bed',name:'Bed',short:'Bed',x:88,y:432,w:132,h:282,a:0,color:2,kind:'bed',on:true},
+    {id:'desk',name:'Smaller desk',short:'Desk',x:130,y:38,w:142,h:65,a:0,color:4,on:true},
+    {id:'chair',name:'Desk chair',short:'Chair',x:130,y:105,w:43,h:43,a:0,color:5,kind:'chair',on:true},
+    {id:'tall',name:'Tall shelves · square base',short:'Tall',x:248,y:35,w:61,h:61,a:0,color:4,on:true},
+    {id:'sofa',name:'One-seat sofa',short:'Sofa',x:351,y:125,w:91,h:103,a:0,color:3,kind:'sofa',on:true},
+    {id:'deco',name:'Decorative square shelf',short:'Decor',x:37,y:231,w:43,h:43,a:0,color:4,on:true},
+    {id:'night',name:'Square nightstand',short:'Night',x:185,y:553,w:43,h:43,a:0,color:4,on:true},
+    {id:'dresser',name:'Long dresser · optional',short:'Dresser',x:33,y:232,w:47,h:145,a:0,color:4,on:false}
+  ];
+  let selected='deco', scale=1, ox=0, oy=34, drag=null;
+  const history=[];
+  const room=[[0,0],[348,0],[420,72],[420,580],[0,580]];
+  const doors=[{name:'Upper closet swing',x:420,y:171,r:66,dir:1},{name:'Lower closet swing',x:420,y:348,r:66,dir:1},{name:'Entry door swing',x:420,y:580,r:72,dir:-1}];
+  function el(tag,attrs={},parent=svg) {const e=document.createElementNS(ns,tag); for(const [k,v] of Object.entries(attrs))e.setAttribute(k,String(v)); parent.append(e); return e;}
+  const current=()=>pieces.find(p=>p.id===selected);
+  const snapshot=()=>JSON.stringify(pieces);
+  function remember(){history.push(snapshot());if(history.length>80)history.shift();root.querySelector('[data-action="undo"]').disabled=false;}
+  function corners(p){const c=Math.cos(p.a*Math.PI/180),s=Math.sin(p.a*Math.PI/180);return [[-p.w/2,-p.h/2],[p.w/2,-p.h/2],[p.w/2,p.h/2],[-p.w/2,p.h/2]].map(([x,y])=>[p.x+x*c-y*s,p.y+x*s+y*c]);}
+  function overlap(a,b){for(const poly of [a,b])for(let i=0;i<poly.length;i++){const v=poly[i],w=poly[(i+1)%poly.length],axis=[v[1]-w[1],w[0]-v[0]];const pa=a.map(p=>p[0]*axis[0]+p[1]*axis[1]),pb=b.map(p=>p[0]*axis[0]+p[1]*axis[1]);if(Math.max(...pa)<=Math.min(...pb)||Math.max(...pb)<=Math.min(...pa))return false;}return true;}
+  function inRoom([x,y]){return x>=-0.01&&y>=-0.01&&x<=420.01&&y<=580.01&&(y>=71.99||x<=348.01+y);}
+  function doorPoly(d){const p=[[d.x,d.y]];for(let i=0;i<=16;i++){const a=i*Math.PI/32;p.push([d.x-d.r*Math.cos(a),d.y+d.dir*d.r*Math.sin(a)]);}return p;}
+  function issues(p){if(!p.on)return ['Not included'];const poly=corners(p),out=[];if(poly.some(v=>!inRoom(v)))out.push('extends beyond room');for(const d of doors)if(overlap(poly,doorPoly(d)))out.push(d.name.toLowerCase());if(overlap(poly,[[0,66],[16,66],[16,146],[0,146]]))out.push('radiator footprint');for(const q of pieces)if(q.on&&q!==p&&overlap(poly,corners(q)))out.push(q.name.toLowerCase());return out;}
+  function constrain(p){const verts=corners(p),minX=Math.min(...verts.map(v=>v[0])),maxX=Math.max(...verts.map(v=>v[0])),minY=Math.min(...verts.map(v=>v[1])),maxY=Math.max(...verts.map(v=>v[1]));if(minX<0)p.x-=minX;if(maxX>420)p.x-=maxX-420;if(minY<0)p.y-=minY;if(maxY>580)p.y-=maxY-580;}
+  function label(parent,x,y,value,extra={}){return el('text',{x,y,'text-anchor':'middle','dominant-baseline':'middle','font-size':12/scale,...extra},parent).appendChild(document.createTextNode(value));}
+  function draw(){
+    const width=Math.max(280,ui('canvas').clientWidth);scale=Math.min((width-88)/420,1.03);ox=(width-420*scale)/2;oy=32;
+    const height=580*scale+70;svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.style.height=height+'px';svg.replaceChildren();
+    const g=el('g',{transform:'translate('+ox+' '+oy+') scale('+scale+')'});
+    el('polygon',{points:room.map(p=>p.join(',')).join(' '),fill:'var(--background)',stroke:'var(--foreground)','stroke-width':5},g);
+    const windows=[{x:42,y:-5,w:118,h:10,name:'W1',lx:101,ly:-18},{x:-5,y:58,w:10,h:94,name:'W2',lx:-21,ly:102},{x:-5,y:458,w:10,h:113,name:'W3',lx:-21,ly:480}];
+    for(const v of windows){el('rect',{x:v.x,y:v.y,width:v.w,height:v.h,fill:'var(--blue)',stroke:'var(--foreground)','stroke-width':1},g);label(g,v.lx,v.ly,v.name);}
+    el('rect',{x:4,y:67,width:12,height:78,rx:2,fill:'var(--orange)',stroke:'var(--foreground)','stroke-width':1},g);
+    label(g,25,160,'Radiator',{'text-anchor':'start'});
+    el('rect',{x:-4,y:518,width:8,height:32,fill:'var(--foreground)'},g);label(g,-20,538,'AC');
+    doors.forEach((d,i)=>{
+      const a=d.y+d.dir*d.r;
+      el('path',{d:'M '+d.x+' '+d.y+' L '+(d.x-d.r)+' '+d.y+' A '+d.r+' '+d.r+' 0 0 '+(d.dir===1?0:1)+' '+d.x+' '+a+' Z',fill:'var(--orange)','fill-opacity':.08,stroke:'var(--orange)','stroke-width':1,'stroke-dasharray':'4 4'},g);
+      el('line',{x1:420,y1:d.y,x2:420,y2:a,stroke:'var(--background)','stroke-width':6},g);
+      el('line',{x1:420,y1:d.y,x2:420-d.r*.7,y2:d.y+d.dir*d.r*.7,stroke:'var(--foreground)','stroke-width':2},g);
+      label(g,440,d.y+d.dir*d.r/2,i<2?'C'+(i+1):'Entry');
+    });
+    const layer=el('g',{},g);
+    for(const p of [...pieces.filter(p=>p.id!==selected),current()].filter(p=>p.on)){
+      const isSel=p.id===selected,grp=el('g',{'data-piece':p.id,class:'furniture'+(drag&&drag.id===p.id?' dragging':''),transform:'translate('+p.x+' '+p.y+') rotate('+p.a+')','aria-label':p.name},layer);
+      el('title',{},grp).textContent=p.name;
+      const fill='var(--viz-series-'+p.color+')';
+      if(p.kind==='sofa'){
+        el('path',{d:'M '+(-p.w*.38)+' '+(-p.h*.48)+' C '+(p.w*.35)+' '+(-p.h*.6)+' '+(p.w*.72)+' '+(-p.h*.05)+' '+(p.w*.32)+' '+(p.h*.46)+' Q '+(-p.w*.05)+' '+(p.h*.65)+' '+(-p.w*.05)+' '+(p.h*.22)+' C '+(p.w*.1)+' '+(-p.h*.08)+' '+(-p.w*.05)+' '+(-p.h*.15)+' '+(-p.w*.35)+' '+(-p.h*.12)+' Q '+(-p.w*.62)+' '+(-p.h*.17)+' '+(-p.w*.38)+' '+(-p.h*.48)+' Z',fill,'fill-opacity':.35,stroke:'var(--foreground)','stroke-width':1.5},grp);
+      }else{
+        el('rect',{x:-p.w/2,y:-p.h/2,width:p.w,height:p.h,rx:p.kind==='chair'?9:2,fill,'fill-opacity':.28,stroke:'var(--foreground)','stroke-width':1.5},grp);
+        if(p.kind==='bed'){el('rect',{x:-p.w*.34,y:p.h*.28,width:p.w*.68,height:p.h*.17,rx:5,fill:'var(--background)',stroke:'var(--foreground)','stroke-width':1},grp);el('line',{x1:-p.w/2,y1:p.h*.23,x2:p.w/2,y2:p.h*.23,stroke:'var(--foreground)','stroke-width':1},grp);}
+        if(p.kind==='chair')el('line',{x1:-p.w*.38,y1:-p.h*.3,x2:p.w*.38,y2:-p.h*.3,stroke:'var(--foreground)','stroke-width':3},grp);
+      }
+      if(isSel){
+        el('rect',{x:-p.w/2-5,y:-p.h/2-5,width:p.w+10,height:p.h+10,rx:4,fill:'none',stroke:'var(--ring)','stroke-width':2/scale,'stroke-dasharray':'5 3','pointer-events':'none'},grp);
+        const handleY=-p.h/2-24/scale;
+        el('line',{x1:0,y1:-p.h/2,x2:0,y2:handleY,stroke:'var(--ring)','stroke-width':2/scale,'pointer-events':'none'},grp);
+        const handle=el('g',{'data-rotate':p.id},grp);
+        el('circle',{cx:0,cy:handleY,r:22/scale,fill:'transparent'},handle);
+        el('circle',{cx:0,cy:handleY,r:8/scale,fill:'var(--background)',stroke:'var(--ring)','stroke-width':2/scale},handle);
+        el('title',{},handle).textContent='Drag to rotate';
+      }
+      const textFits=p.w*scale>p.short.length*7+8;
+      label(grp,0,0,textFits?p.short:String(pieces.indexOf(p)+1),{transform:'rotate('+(-p.a)+')'});
+    }
+  }
+  function sync(){const p=current();ui('angle').value=p.a;ui('angle-value').textContent=p.a+'°';ui('piece').value=selected;ui('included').checked=p.on;ui('width').value=p.w;ui('height').value=p.h;ui('width-value').textContent=p.w+' sketch units';ui('height-value').textContent=p.h+' sketch units';const problems=issues(p);ui('status').textContent=p.name+' · '+p.a+'°'+(problems.length?' · '+(p.on?'Overlaps / check: ':'')+problems.join(', '):'');}
+  pieces.forEach((p,i)=>{const option=document.createElement('option');option.value=p.id;option.textContent=(i+1)+'. '+p.name;ui('piece').append(option);});
+  function select(id){selected=id;sync();draw();}
+  function point(e){const r=svg.getBoundingClientRect();return {x:(e.clientX-r.left-ox)/scale,y:(e.clientY-r.top-oy)/scale};}
+  svg.addEventListener('pointerdown',e=>{const target=e.target.closest('[data-piece]');if(!target)return;const rotating=!!e.target.closest('[data-rotate]');e.preventDefault();select(target.dataset.piece);const p=current(),pos=point(e);drag={id:p.id,rotating,startAngle:p.a,pointerAngle:Math.atan2(pos.y-p.y,pos.x-p.x)*180/Math.PI,dx:pos.x-p.x,dy:pos.y-p.y,before:snapshot(),moved:false};svg.setPointerCapture(e.pointerId);});
+  svg.addEventListener('pointermove',e=>{if(!drag)return;const p=pieces.find(v=>v.id===drag.id),pos=point(e);if(drag.rotating){p.a=((Math.round(drag.startAngle+Math.atan2(pos.y-p.y,pos.x-p.x)*180/Math.PI-drag.pointerAngle)%360)+360)%360;}else{p.x=Math.round(pos.x-drag.dx);p.y=Math.round(pos.y-drag.dy);constrain(p);}drag.moved=true;ui('angle').value=p.a;ui('angle-value').textContent=p.a+'°';draw();});
+  function finish(){if(!drag)return;if(drag.moved){history.push(drag.before);if(history.length>80)history.shift();root.querySelector('[data-action="undo"]').disabled=false;}drag=null;sync();draw();}
+  svg.addEventListener('pointerup',finish);svg.addEventListener('pointercancel',finish);
+  ui('piece').addEventListener('change',e=>select(e.target.value));
+  root.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>{
+    const action=button.dataset.action,p=current();if(action==='undo'){if(history.length){const saved=JSON.parse(history.pop());pieces.splice(0,pieces.length,...saved);}button.disabled=!history.length;}
+    else{remember();if(action==='rotate-left')p.a=(p.a+315)%360;else if(action==='rotate-right')p.a=(p.a+45)%360;else if(action==='left')p.x-=5;else if(action==='right')p.x+=5;else if(action==='up')p.y-=5;else if(action==='down')p.y+=5;constrain(p);}sync();draw();
+  }));
+  ui('included').addEventListener('change',e=>{remember();current().on=e.target.checked;sync();draw();});
+  let rotatingSlider=false;
+  ui('angle').addEventListener('input',e=>{if(!rotatingSlider){remember();rotatingSlider=true;}current().a=Number(e.target.value);sync();draw();});
+  ui('angle').addEventListener('change',()=>{rotatingSlider=false;});
+  for(const [name,key] of [['width','w'],['height','h']]){
+    let started=false;
+    ui(name).addEventListener('input',e=>{if(!started){remember();started=true;}const p=current();p[key]=Number(e.target.value);if(['tall','deco','night'].includes(p.id)){p.w=p.h=Number(e.target.value);}constrain(p);sync();draw();});
+    ui(name).addEventListener('change',()=>{started=false;});
+  }
+  new ResizeObserver(draw).observe(ui('canvas'));sync();draw();
+})();
+</script>
